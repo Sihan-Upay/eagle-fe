@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chat</title>
+    <style>
+      /* Reset default styles */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        display: flex;
+        flex-direction: column;
+        background: linear-gradient(135deg, #3a3a9f, #8c62f6);
+        height: 100vh;
+        color: #333;
+        overflow: hidden;
+      }
+
+      .chat-header {
+        background-color: #6a5acd;
+        color: white;
+        padding: 1em;
+        font-size: 1.5rem;
+        font-weight: 600;
+        text-align: center;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        border-bottom: 1px solid #ddd;
+      }
+
+      #messages {
+        flex-grow: 1;
+        padding: 1em;
+        overflow-y: auto;
+        background-color: #f5f5f5;
+        display: flex;
+        flex-direction: column;
+        gap: 1em;
+        border-radius: 8px 8px 0 0;
+      }
+
+      .message {
+        padding: 12px;
+        border-radius: 12px;
+        max-width: 75%;
+        font-size: 0.9rem;
+        position: relative;
+        display: inline-block;
+        line-height: 1.4;
+        word-wrap: break-word;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        transition: transform 0.3s ease;
+      }
+
+      .message.sent {
+        background: linear-gradient(90deg, #6a5acd, #7b68ee);
+        color: white;
+        align-self: flex-end;
+        text-align: right;
+        animation: slide-in 0.3s ease;
+      }
+
+      .message.received {
+        background: #e0e7ff; /* Light blue background for better contrast */
+        color: #333333; /* Darker text color for readability */
+        align-self: flex-start;
+        text-align: left;
+        animation: slide-in 0.3s ease;
+        border: 1px solid #c0c7ff; /* Slight border to distinguish from background */
+      }
+
+      .message strong {
+        font-weight: bold;
+        color: #333;
+      }
+
+      .chat-footer {
+        display: flex;
+        padding: 1em;
+        background-color: #ffffff;
+        border-top: 1px solid #ddd;
+        flex-shrink: 0;
+      }
+
+      .chat-footer form {
+        display: flex;
+        width: 100%;
+        align-items: center;
+        gap: 0.5em;
+      }
+
+      .chat-footer input[type="text"] {
+        flex-grow: 1;
+        padding: 10px;
+        border-radius: 20px;
+        border: 1px solid #ddd;
+        font-size: 1rem;
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
+        outline: none;
+        min-width: 0; /* Prevent input from overflowing */
+      }
+
+      .chat-footer button {
+        padding: 10px 16px;
+        font-size: 1rem;
+        background: linear-gradient(90deg, #6a5acd, #7b68ee);
+        color: white;
+        border: none;
+        border-radius: 20px;
+        cursor: pointer;
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+        box-shadow: 0 4px 8px rgba(106, 90, 205, 0.3);
+      }
+
+      .chat-footer button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(106, 90, 205, 0.4);
+      }
+
+      @keyframes slide-in {
+        from {
+          transform: translateY(20px);
+          opacity: 0;
+        }
+        to {
+          transform: translateY(0);
+          opacity: 1;
+        }
+      }
+
+      /* Responsive Styles */
+      @media (max-width: 768px) {
+        .chat-header {
+          font-size: 1.3rem;
+        }
+
+        .message {
+          max-width: 85%; /* Increase width on smaller screens */
+        }
+
+        .chat-footer input[type="text"] {
+          padding: 8px;
+          font-size: 0.9rem;
+        }
+
+        .chat-footer button {
+          padding: 8px 12px;
+          font-size: 0.9rem;
+        }
+      }
+
+      @media (max-width: 480px) {
+        .chat-header {
+          font-size: 1.2rem;
+        }
+
+        .message {
+          font-size: 0.85rem;
+          max-width: 90%; /* Increase message width on very small screens */
+        }
+
+        .chat-footer input[type="text"] {
+          padding: 6px;
+        }
+
+        .chat-footer button {
+          padding: 6px 10px;
+        }
+      }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <script>
+      // Global variables for MQTT and chat
+      let client;
+      const brokerUrl = "wss://ltm5svws-8080.asse.devtunnels.ms/broker";
+      let channel = "";
+      let clientId = "";
+
+      // Function to get the URL parameter and set the channel
+      function GetURLParameter() {
+        const params = new URLSearchParams(window.location.search);
+        channel = params.get("channel") ?? "general"; // Default to 'general' if no channel specified
+        clientId =
+          params.get("username") ??
+          "client-" + Math.random().toString(36).substring(7);
+        document.getElementById(
+          "chat-header"
+        ).innerText = `Channel: ${channel}`;
+      }
+
+      // Function to initialize and connect to the MQTT broker
+      function connectMQTT() {
+        client = new Paho.MQTT.Client(brokerUrl, clientId);
+
+        // Set up the connection and message handlers
+        client.onConnectionLost = onConnectionLost;
+        client.onMessageArrived = onMessageArrived;
+
+        // Connect to the broker
+        client.connect({
+          onSuccess: onConnect,
+          onFailure: onFailure,
+          useSSL: false,
+        });
+      }
+
+      // Called when the client connects
+      function onConnect() {
+        console.log("Connected to broker");
+        client.subscribe(channel); // Subscribe to the current channel
+      }
+
+      // Called when the client fails to connect
+      function onFailure(error) {
+        console.error("Failed to connect to broker:", error.toString());
+      }
+
+      // Called when the connection is lost
+      function onConnectionLost(responseObject) {
+        if (responseObject.errorCode !== 0) {
+          console.error("Connection lost:", responseObject.errorMessage);
+        }
+      }
+
+      // Handle received messages
+      function onMessageArrived(message) {
+        const { payloadString, destinationName } = message;
+        displayMessage(payloadString, "received");
+      }
+
+      // Function to display messages in the chat
+      function displayMessage(content, type) {
+        const messagesContainer = document.getElementById("messages");
+        const contentJson = JSON.parse(content);
+        if (!(contentJson.sender === clientId && type === "received")) {
+          const messageDiv = document.createElement("div");
+
+          messageDiv.className = `message ${type}`;
+          messageDiv.innerHTML = `<strong>${
+            type === "sent" ? "You" : contentJson.sender
+          }</strong><br />${contentJson.message}`;
+          messagesContainer.appendChild(messageDiv);
+          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+      }
+
+      // Send a message to the broker
+      function sendMessage(event) {
+        event.preventDefault();
+        const inputField = document.querySelector(
+          ".chat-footer input[name='content']"
+        );
+        const messageText = inputField.value;
+        if (messageText) {
+          const messageStringify = JSON.stringify({
+            sender: clientId,
+            message: messageText,
+          });
+          const message = new Paho.MQTT.Message(messageStringify);
+          message.destinationName = channel;
+          client.send(message); // Publish the message
+          displayMessage(messageStringify, "sent"); // Display the sent message
+          inputField.value = ""; // Clear the input field
+        }
+      }
+
+      // Initialize URL params, MQTT, and event listeners on page load
+      window.onload = () => {
+        GetURLParameter();
+        connectMQTT();
+        document
+          .querySelector(".chat-footer form")
+          .addEventListener("submit", sendMessage);
+      };
+    </script>
+  </head>
+  <body>
+    <div class="chat-header" id="chat-header">Channel: {{ channel }}</div>
+
+    <div id="messages">
+      <!-- {% for message in messages %}
+      <div
+        class="message {% if message.username == username %}sent{% else %}received{% endif %}"
+      >
+        <strong>{{ message.username }}</strong><br />
+        {{ message.content }}
+        <small>{{ message.timestamp }}</small>
+      </div>
+      {% endfor %} -->
+    </div>
+
+    <div class="chat-footer">
+      <form method="POST">
+        <!-- {% csrf_token %} -->
+        <input
+          type="text"
+          name="content"
+          placeholder="Type a message..."
+          required
+        />
+        <button type="submit">Send</button>
+      </form>
+    </div>
+  </body>
+</html>
